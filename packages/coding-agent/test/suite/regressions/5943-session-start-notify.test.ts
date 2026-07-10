@@ -75,6 +75,7 @@ type LoadedResourcesContext = {
 
 type RebindContext = {
 	unsubscribe?: () => void;
+	ensureMainForeground: () => void;
 	applyRuntimeSettings: () => void;
 	renderCurrentSessionState: () => void;
 	bindCurrentSessionExtensions: () => Promise<void>;
@@ -86,6 +87,7 @@ type RebindContext = {
 
 type ReloadCommandContext = {
 	hideThinkingBlock: boolean;
+	ensureMainForeground: () => void;
 	session: {
 		isStreaming: boolean;
 		isCompacting: boolean;
@@ -155,6 +157,7 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 	const editor = overrides.editor ?? {};
 	return {
 		hideThinkingBlock: overrides.hideThinkingBlock ?? false,
+		ensureMainForeground: () => {},
 		session: {
 			isStreaming: false,
 			isCompacting: false,
@@ -283,6 +286,7 @@ describe("regression #5943: session_start transient UI", () => {
 
 		try {
 			const context: RebindContext = {
+				ensureMainForeground: () => {},
 				applyRuntimeSettings: () => events.push("apply"),
 				renderCurrentSessionState: () => events.push("render"),
 				bindCurrentSessionExtensions: async () => {
@@ -324,6 +328,7 @@ describe("regression #5943: session_start transient UI", () => {
 
 		try {
 			const context: RebindContext = {
+				ensureMainForeground: () => {},
 				applyRuntimeSettings: () => {},
 				renderCurrentSessionState: () => events.push("render"),
 				bindCurrentSessionExtensions: async () => {
@@ -376,6 +381,7 @@ describe("regression #5943: session_start transient UI", () => {
 
 		try {
 			const context: RebindContext = {
+				ensureMainForeground: () => {},
 				applyRuntimeSettings: () => {},
 				renderCurrentSessionState: () => events.push("render"),
 				bindCurrentSessionExtensions: async () => {

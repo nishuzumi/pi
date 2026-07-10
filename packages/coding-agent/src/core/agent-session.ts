@@ -2198,6 +2198,20 @@ export class AgentSession {
 		await this.extendResourcesFromExtensions(this._sessionStartEvent.reason === "reload" ? "reload" : "startup");
 	}
 
+	/**
+	 * Replace the extension UI context WITHOUT re-emitting session_start.
+	 *
+	 * For hosts that keep multiple live, already-bound sessions and swap which
+	 * one owns the terminal (multi-agent foreground switching). Unlike
+	 * bindExtensions(), this only rebinds the UI surface; the extension lifecycle
+	 * (session_start/session_shutdown pairing) is untouched, so it is safe to
+	 * call repeatedly on a session whose extensions are already running.
+	 */
+	setExtensionUiContext(uiContext: ExtensionUIContext): void {
+		this._extensionUIContext = uiContext;
+		this._applyExtensionBindings(this._extensionRunner);
+	}
+
 	private async extendResourcesFromExtensions(reason: "startup" | "reload"): Promise<void> {
 		if (!this._extensionRunner.hasHandlers("resources_discover")) {
 			return;

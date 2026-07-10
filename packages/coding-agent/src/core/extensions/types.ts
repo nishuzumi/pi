@@ -42,6 +42,8 @@ import type {
 } from "@earendil-works/pi-tui";
 import type { Static, TSchema } from "typebox";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
+// Type-only import; erased at runtime, so the module cycle with agent-session.ts is safe.
+import type { AgentSession } from "../agent-session.ts";
 import type { BashResult } from "../bash-executor.ts";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.ts";
 import type { EventBus } from "../event-bus.ts";
@@ -123,6 +125,43 @@ export type EditorFactory = (tui: TUI, theme: EditorTheme, keybindings: Keybindi
  * UI context for extensions to request interactive UI.
  * Each mode (interactive, RPC, print) provides its own implementation.
  */
+/**
+ * EXPERIMENTAL: host-level control of multiple live agent sessions sharing one
+ * terminal (foreground switching). Available only in interactive (tui) mode.
+ *
+ * A background agent keeps running (streaming, tools, extensions) while parked;
+ * foregrounding it repaints the scrollback from its session, routes editor
+ * input to it, and replays its extension UI footprint. The primary session is
+ * always addressable as "main".
+ */
+export interface ExtensionAgentsApi {
+	/**
+	 * Adopt a live AgentSession as a background agent. Swaps the session's
+	 * extension UI context to a host-managed proxy without re-emitting
+	 * session_start. Adopt BEFORE the session's bindExtensions() call so its
+	 * very first session_start already runs against the proxy. Returns a
+	 * detach function.
+	 *
+	 * `dormantUi` handles dialogs/notifications while the agent is backgrounded
+	 * (e.g. a pending-UI context that surfaces needs_attention); without it,
+	 * dormant dialogs auto-cancel and notifications queue until foregrounded.
+	 */
+	adopt(
+		id: string,
+		session: AgentSession,
+		options?: {
+			label?: string;
+			dormantUi?: Partial<Pick<ExtensionUIContext, "select" | "confirm" | "input" | "editor" | "custom" | "notify">>;
+		},
+	): () => void;
+	/** Foreground a registered agent by id, or "main" for the primary session. */
+	setForeground(id: string): Promise<void>;
+	/** Id of the current foreground agent ("main" for the primary session). */
+	getForeground(): string;
+	/** List the primary session and all adopted background agents. */
+	list(): Array<{ id: string; label?: string; isForeground: boolean }>;
+}
+
 export interface ExtensionUIContext {
 	/** Show a selector and return the user's choice. */
 	select(title: string, options: string[], opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
@@ -274,6 +313,12 @@ export interface ExtensionUIContext {
 
 	/** Set tool output expansion state. */
 	setToolsExpanded(expanded: boolean): void;
+
+	/**
+	 * EXPERIMENTAL: multi-agent foreground control (interactive mode only).
+	 * Undefined in rpc/json/print modes and in contexts that do not own a terminal.
+	 */
+	readonly agents?: ExtensionAgentsApi;
 }
 
 // ============================================================================

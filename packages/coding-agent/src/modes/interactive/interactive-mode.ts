@@ -27,6 +27,7 @@ import type {
 	OverlayHandle,
 	OverlayOptions,
 	SlashCommand,
+	Terminal,
 } from "@earendil-works/pi-tui";
 import {
 	CombinedAutocompleteProvider,
@@ -70,6 +71,7 @@ import {
 import type {
 	AutocompleteProviderFactory,
 	EditorFactory,
+	ExtensionAgentsApi,
 	ExtensionCommandContext,
 	ExtensionContext,
 	ExtensionRunner,
@@ -145,6 +147,7 @@ import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
 import { getModelSearchText } from "./model-search.ts";
+import { type DormantUiDelegate, SessionUiProxy } from "./session-ui-proxy.ts";
 import {
 	getAvailableThemes,
 	getAvailableThemesWithPaths,
@@ -337,6 +340,8 @@ export interface InteractiveModeOptions {
 	initialMessages?: string[];
 	/** Force verbose startup (overrides quietStartup setting) */
 	verbose?: boolean;
+	/** Inject a custom terminal (used by tests to run against a virtual terminal). */
+	terminal?: Terminal;
 }
 
 export class InteractiveMode {
@@ -450,8 +455,21 @@ export class InteractiveMode {
 	private autoTrustOnReloadCwd: string | undefined;
 	private themeController: InteractiveThemeController;
 
+	// Multi-agent foreground switching (EXPERIMENTAL)
+	// The primary session is always "main"; adopted background agents keep their
+	// own live AgentSession and a SessionUiProxy that records/replays their
+	// extension UI footprint. Switching foreground never re-binds extensions.
+	private foregroundAgentId = "main";
+	private backgroundAgents = new Map<string, { session: AgentSession; proxy: SessionUiProxy; label?: string }>();
+	private mainAgentProxy: SessionUiProxy | undefined;
+	private agentsApi: ExtensionAgentsApi | undefined;
+
 	// Convenience accessors
 	private get session(): AgentSession {
+		if (this.foregroundAgentId !== "main") {
+			const entry = this.backgroundAgents.get(this.foregroundAgentId);
+			if (entry) return entry.session;
+		}
 		return this.runtimeHost.session;
 	}
 	private get agent() {
@@ -475,7 +493,7 @@ export class InteractiveMode {
 			await this.rebindCurrentSession({ renderBeforeBind: true });
 		});
 		this.version = VERSION;
-		this.ui = new TUI(new ProcessTerminal(), this.settingsManager.getShowHardwareCursor());
+		this.ui = new TUI(options.terminal ?? new ProcessTerminal(), this.settingsManager.getShowHardwareCursor());
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
 		this.headerContainer = new Container();
 		this.loadedResourcesContainer = new Container();
@@ -1623,9 +1641,14 @@ export class InteractiveMode {
 	 * Initialize the extension system with TUI-based UI context.
 	 */
 	private async bindCurrentSessionExtensions(): Promise<void> {
-		const uiContext = this.createExtensionUIContext();
+		// The main session's extensions talk to the terminal through a stable
+		// SessionUiProxy so their UI footprint can be cleared and replayed when a
+		// background agent takes the foreground (multi-agent switching).
+		const proxy = new SessionUiProxy("main", this.createExtensionUIContext());
+		this.mainAgentProxy = proxy;
+		if (this.foregroundAgentId === "main") proxy.activate();
 		await this.session.bindExtensions({
-			uiContext,
+			uiContext: proxy,
 			mode: "tui",
 			abortHandler: () => {
 				this.restoreQueuedMessagesToEditor({ abort: true });
@@ -1635,6 +1658,7 @@ export class InteractiveMode {
 				newSession: async (options) => {
 					this.clearStatusIndicator();
 					try {
+						this.ensureMainForeground();
 						return await this.runtimeHost.newSession(options);
 					} catch (error: unknown) {
 						return this.handleFatalRuntimeError("Failed to create session", error);
@@ -1642,6 +1666,7 @@ export class InteractiveMode {
 				},
 				fork: async (entryId, options) => {
 					try {
+						this.ensureMainForeground();
 						const result = await this.runtimeHost.fork(entryId, options);
 						if (!result.cancelled) {
 							this.editor.setText(result.selectedText ?? "");
@@ -1723,6 +1748,9 @@ export class InteractiveMode {
 	}
 
 	private async rebindCurrentSession(options: { renderBeforeBind?: boolean } = {}): Promise<void> {
+		// Defensive: replacement flows not covered by an entry-point guard still
+		// rebind against the primary session.
+		this.ensureMainForeground();
 		this.unsubscribe?.();
 		this.unsubscribe = undefined;
 		this.applyRuntimeSettings();
@@ -1737,6 +1765,139 @@ export class InteractiveMode {
 		await this.updateAvailableProviderCount();
 		this.updateEditorBorderColor();
 		this.updateTerminalTitle();
+	}
+
+	// =========================================================================
+	// Multi-agent foreground switching (EXPERIMENTAL)
+	// =========================================================================
+
+	private currentAgentProxy(): SessionUiProxy | undefined {
+		if (this.foregroundAgentId === "main") return this.mainAgentProxy;
+		return this.backgroundAgents.get(this.foregroundAgentId)?.proxy;
+	}
+
+	/**
+	 * Session replacement (/new, /resume, fork), reload, and shutdown are
+	 * defined on the primary session. Entry points call this BEFORE tearing
+	 * anything down so extension "before" events (which may open dialogs) run
+	 * against a live, painted UI instead of a dormant proxy that auto-cancels.
+	 */
+	private ensureMainForeground(): void {
+		this.setForegroundAgent("main");
+	}
+
+	/**
+	 * Switch which live agent session owns the terminal.
+	 *
+	 * This never re-binds extensions (no session_start re-emit). It only:
+	 * 1. unsubscribes rendering from the old foreground and clears its extension
+	 *    UI footprint (kept in its proxy for replay)
+	 * 2. repaints scrollback/footer/editor state from the new foreground session
+	 * 3. re-subscribes rendering and replays the new foreground's footprint
+	 */
+	setForegroundAgent(id: string): void {
+		if (id === this.foregroundAgentId) return;
+		if (id !== "main" && !this.backgroundAgents.has(id)) {
+			throw new Error(`Unknown agent: ${id}`);
+		}
+
+		const oldProxy = this.currentAgentProxy();
+		this.unsubscribe?.();
+		this.unsubscribe = undefined;
+		oldProxy?.deactivate();
+		// Autocomplete wrappers cannot be removed individually; clear and let the
+		// incoming proxy replay its own recorded providers on activate().
+		this.autocompleteProviderWrappers = [];
+
+		// Streaming/tool components belong to the old session's chat.
+		this.streamingComponent = undefined;
+		this.streamingMessage = undefined;
+		this.pendingTools.clear();
+
+		this.foregroundAgentId = id;
+
+		this.applyRuntimeSettings();
+		this.renderCurrentSessionState();
+		this.subscribeToAgent();
+		this.seedStreamingComponentIfMidStream();
+		this.currentAgentProxy()?.activate();
+		this.setupAutocompleteProvider();
+		this.updatePendingMessagesDisplay();
+		this.updateEditorBorderColor();
+		this.updateTerminalTitle();
+		const label = id === "main" ? "main" : (this.backgroundAgents.get(id)?.label ?? id);
+		this.showStatus(`Foreground agent: ${label}`);
+		this.ui.requestRender();
+	}
+
+	/**
+	 * Start rendering a streaming assistant message. Used on message_start and
+	 * when a foreground switch attaches mid-stream.
+	 */
+	private beginStreamingMessage(message: AssistantMessage): void {
+		this.streamingComponent = new AssistantMessageComponent(
+			undefined,
+			this.hideThinkingBlock,
+			this.getMarkdownThemeWithSettings(),
+			this.hiddenThinkingLabel,
+			this.outputPad,
+		);
+		this.streamingMessage = message;
+		this.chatContainer.addChild(this.streamingComponent);
+		this.streamingComponent.updateContent(message);
+	}
+
+	/**
+	 * When attaching to a session that is mid-stream, message_update events only
+	 * render if a streaming component exists (normally created on message_start,
+	 * which this subscriber missed). Seed it from the agent's partial message.
+	 */
+	private seedStreamingComponentIfMidStream(): void {
+		const partial = this.session.agent.state.streamingMessage;
+		if (!partial || partial.role !== "assistant") return;
+		this.beginStreamingMessage(partial);
+	}
+
+	/**
+	 * Adopt a live, already-bound AgentSession as a background agent.
+	 * Swaps its extension UI context to a host-managed proxy WITHOUT re-emitting
+	 * session_start (AgentSession.setExtensionUiContext). Returns a detach fn.
+	 */
+	private adoptBackgroundAgent(
+		id: string,
+		session: AgentSession,
+		options?: { label?: string; dormantUi?: DormantUiDelegate },
+	): () => void {
+		if (id === "main") throw new Error('Agent id "main" is reserved for the primary session');
+		if (this.backgroundAgents.has(id)) throw new Error(`Agent id already registered: ${id}`);
+		const proxy = new SessionUiProxy(id, this.createExtensionUIContext(), {
+			dormantDelegate: options?.dormantUi,
+		});
+		session.setExtensionUiContext(proxy);
+		this.backgroundAgents.set(id, { session, proxy, label: options?.label });
+		return () => {
+			if (this.foregroundAgentId === id) this.setForegroundAgent("main");
+			this.backgroundAgents.delete(id);
+		};
+	}
+
+	private getAgentsApi(): ExtensionAgentsApi {
+		this.agentsApi ??= {
+			adopt: (id, session, options) => this.adoptBackgroundAgent(id, session, options),
+			setForeground: async (id) => {
+				this.setForegroundAgent(id);
+			},
+			getForeground: () => this.foregroundAgentId,
+			list: () => [
+				{ id: "main", label: "main", isForeground: this.foregroundAgentId === "main" },
+				...Array.from(this.backgroundAgents.entries(), ([id, entry]) => ({
+					id,
+					label: entry.label,
+					isForeground: this.foregroundAgentId === id,
+				})),
+			],
+		};
+		return this.agentsApi;
 	}
 
 	private async handleFatalRuntimeError(prefix: string, error: unknown): Promise<never> {
@@ -2180,6 +2341,7 @@ export class InteractiveMode {
 			},
 			getToolsExpanded: () => this.toolOutputExpanded,
 			setToolsExpanded: (expanded) => this.setToolsExpanded(expanded),
+			agents: this.getAgentsApi(),
 		};
 	}
 
@@ -2888,16 +3050,7 @@ export class InteractiveMode {
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
-					this.streamingComponent = new AssistantMessageComponent(
-						undefined,
-						this.hideThinkingBlock,
-						this.getMarkdownThemeWithSettings(),
-						this.hiddenThinkingLabel,
-						this.outputPad,
-					);
-					this.streamingMessage = event.message;
-					this.chatContainer.addChild(this.streamingComponent);
-					this.streamingComponent.updateContent(this.streamingMessage);
+					this.beginStreamingMessage(event.message);
 					this.ui.requestRender();
 				}
 				break;
@@ -3497,6 +3650,12 @@ export class InteractiveMode {
 	private async shutdown(options?: { fromSignal?: boolean }): Promise<void> {
 		if (this.isShuttingDown) return;
 		this.isShuttingDown = true;
+		// session_shutdown and terminal teardown always run against the primary session.
+		try {
+			this.ensureMainForeground();
+		} catch {
+			// Never let foreground restore block shutdown.
+		}
 		// Keep signal handlers registered until terminal cleanup has completed.
 		// `signal-exit` checks the listener list during the same SIGTERM/SIGHUP
 		// dispatch and re-sends the signal if only its own listeners remain.
@@ -4758,6 +4917,7 @@ export class InteractiveMode {
 	): Promise<{ cancelled: boolean }> {
 		this.clearStatusIndicator();
 		try {
+			this.ensureMainForeground();
 			const result = await this.runtimeHost.switchSession(sessionPath, {
 				withSession: options?.withSession,
 				projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
@@ -5284,6 +5444,7 @@ export class InteractiveMode {
 	// =========================================================================
 
 	private async handleReloadCommand(): Promise<void> {
+		this.ensureMainForeground();
 		if (this.session.isStreaming) {
 			this.showWarning("Wait for the current response to finish before reloading.");
 			return;

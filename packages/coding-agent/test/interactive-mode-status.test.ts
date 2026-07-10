@@ -162,6 +162,7 @@ describe("InteractiveMode.createExtensionUIContext setTheme", () => {
 					return { success: true };
 				}),
 			},
+			getAgentsApi: () => undefined,
 			ui: { requestRender: vi.fn() },
 		};
 
@@ -189,6 +190,7 @@ describe("InteractiveMode.createExtensionUIContext setTheme", () => {
 				setThemeInstance: vi.fn(() => ({ success: true })),
 				setThemeName: vi.fn(() => ({ success: false, error: "Theme not found" })),
 			},
+			getAgentsApi: () => undefined,
 			ui: { requestRender: vi.fn() },
 		};
 
@@ -280,6 +282,7 @@ describe("InteractiveMode.createExtensionUIContext addAutocompleteProvider", () 
 		const fakeThis = {
 			autocompleteProviderWrappers: [] as AutocompleteProviderFactory[],
 			setupAutocompleteProvider: vi.fn(),
+			getAgentsApi: () => undefined,
 		};
 
 		const uiContext = (InteractiveMode as any).prototype.createExtensionUIContext.call(fakeThis);

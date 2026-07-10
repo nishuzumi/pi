@@ -59,6 +59,7 @@ export type {
 	ExecResult,
 	Extension,
 	ExtensionActions,
+	ExtensionAgentsApi,
 	// API
 	ExtensionAPI,
 	ExtensionCommandContext,
