@@ -1832,13 +1832,12 @@ export class InteractiveMode {
 		this.renderCurrentSessionState();
 		this.subscribeToAgent();
 		this.seedStreamingComponentIfMidStream();
+		this.reconcileForegroundStatusIndicator();
 		this.currentAgentProxy()?.activate();
 		this.setupAutocompleteProvider();
 		this.updatePendingMessagesDisplay();
 		this.updateEditorBorderColor();
 		this.updateTerminalTitle();
-		const label = id === "main" ? "main" : (this.backgroundAgents.get(id)?.label ?? id);
-		this.showStatus(`Foreground agent: ${label}`);
 		// Foreground agents are independent full-screen documents. Clear the old
 		// viewport/scrollback and repaint from the top; the viewport-fill marker
 		// above keeps a short child editor/list/footer anchored at the bottom.
@@ -2023,6 +2022,24 @@ export class InteractiveMode {
 		this.statusContainer.clear();
 		if (hadActiveStatusIndicator && this.ui.getClearOnShrink()) {
 			this.statusContainer.addChild(this.idleStatus);
+		}
+	}
+
+	/**
+	 * Core status chrome is terminal-global, unlike per-session chat and
+	 * extension footprints. Reconcile it from the incoming session whenever
+	 * foreground ownership changes so the outgoing agent's spinner cannot leak.
+	 */
+	private reconcileForegroundStatusIndicator(): void {
+		this.clearStatusIndicator();
+		if (this.workingVisible && this.session.isStreaming) {
+			this.showStatusIndicator(
+				new WorkingStatusIndicator(
+					this.ui,
+					this.workingMessage ?? this.defaultWorkingMessage,
+					this.workingIndicatorOptions,
+				),
+			);
 		}
 	}
 

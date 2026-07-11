@@ -6,6 +6,10 @@
 
 - Raised the minimum supported Node.js version to 24.0.0.
 
+### Fixed
+
+- Fixed foreground agent switches to reconcile the incoming session's working indicator and avoid redundant foreground status lines.
+
 ## [0.80.6] - 2026-07-09
 
 ### New Features

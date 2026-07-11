@@ -331,6 +331,10 @@ describe("multi-agent foreground switching (virtual terminal e2e)", () => {
 	it("foregrounding the child repaints a clean child document", async () => {
 		const agents = mainCounters.agents;
 		if (!agents) throw new Error("agents api missing");
+		// Start a main turn so its Working indicator is live at the exact moment
+		// terminal ownership moves to the already-completed child.
+		const dormantMainRun = mainSession.prompt("main-working-during-switch");
+		await waitFor(terminal, () => mainSession.isStreaming, "main streaming before switch");
 		await agents.setForeground("child");
 		await waitFor(
 			terminal,
@@ -341,6 +345,8 @@ describe("multi-agent foreground switching (virtual terminal e2e)", () => {
 		expect(viewport).not.toContain("reply-from-MAIN");
 		expect(viewport).toContain("WIDGET-OF-CHILD");
 		expect(viewport).not.toContain("WIDGET-OF-MAIN");
+		expect(viewport).not.toContain("Working...");
+		await dormantMainRun;
 	});
 
 	it("routes editor input to the child while it is foreground", async () => {
