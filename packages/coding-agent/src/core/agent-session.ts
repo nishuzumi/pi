@@ -2212,6 +2212,17 @@ export class AgentSession {
 		this._applyExtensionBindings(this._extensionRunner);
 	}
 
+	/**
+	 * The extension UI context currently bound to this session, if any.
+	 *
+	 * Lets hosts that adopted this session (ExtensionAgentsApi.adopt, which swaps
+	 * in a SessionUiProxy via setExtensionUiContext) reach the live proxy — e.g.
+	 * to bindExtensions() against it or to surface queued dialogs on foreground.
+	 */
+	get extensionUiContext(): ExtensionUIContext | undefined {
+		return this._extensionUIContext;
+	}
+
 	private async extendResourcesFromExtensions(reason: "startup" | "reload"): Promise<void> {
 		if (!this._extensionRunner.hasHandlers("resources_discover")) {
 			return;
