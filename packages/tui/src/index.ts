@@ -100,7 +100,6 @@ export {
 	type Component,
 	Container,
 	CURSOR_MARKER,
-	VIEWPORT_FILL_MARKER,
 	type Focusable,
 	isFocusable,
 	type OverlayAnchor,
@@ -110,6 +109,7 @@ export {
 	type OverlayUnfocusOptions,
 	type SizeValue,
 	TUI,
+	VIEWPORT_FILL_MARKER,
 } from "./tui.ts";
 // Utilities
 export { sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.ts";

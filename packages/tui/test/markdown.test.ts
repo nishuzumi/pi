@@ -1361,6 +1361,33 @@ bar`,
 	});
 
 	describe("HTML-like tags in text", () => {
+		it("should not render block HTML comments", () => {
+			const markdown = new Markdown(
+				"**First summary**\n\n<!-- separator -->\n\n**Second summary**",
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const output = markdown.render(80).map(stripAnsi).join("\n");
+
+			assert.ok(output.includes("First summary"));
+			assert.ok(output.includes("Second summary"));
+			assert.ok(!output.includes("<!--"), "HTML comment should be invisible");
+			assert.ok(!output.includes("separator"), "HTML comment body should be invisible");
+		});
+
+		it("should not render inline HTML comments", () => {
+			const markdown = new Markdown("before <!-- hidden separator --> after", 0, 0, defaultMarkdownTheme);
+
+			const output = markdown.render(80).map(stripAnsi).join("\n");
+
+			assert.ok(output.includes("before"));
+			assert.ok(output.includes("after"));
+			assert.ok(!output.includes("<!--"), "inline HTML comment should be invisible");
+			assert.ok(!output.includes("hidden separator"), "inline HTML comment body should be invisible");
+		});
+
 		it("should render content with HTML-like tags as text", () => {
 			// When the model emits something like <thinking>content</thinking> in regular text,
 			// marked might treat it as HTML and hide the content

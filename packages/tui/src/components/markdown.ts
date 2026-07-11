@@ -4,6 +4,11 @@ import type { Component } from "../tui.ts";
 import { applyBackgroundToLine, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
 
 const STRICT_STRIKETHROUGH_REGEX = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/;
+const HTML_COMMENT_REGEX = /^<!--[\s\S]*?-->$/;
+
+function isHtmlComment(raw: string): boolean {
+	return HTML_COMMENT_REGEX.test(raw.trim());
+}
 
 class StrictStrikethroughTokenizer extends Tokenizer {
 	override del(src: string): Tokens.Del | undefined {
@@ -468,8 +473,9 @@ export class Markdown implements Component {
 				break;
 
 			case "html":
-				// Render HTML as plain text (escaped for terminal)
-				if ("raw" in token && typeof token.raw === "string") {
+				// HTML comments are metadata/separators and are invisible in Markdown.
+				// Other HTML-like model output remains visible as plain terminal text.
+				if ("raw" in token && typeof token.raw === "string" && !isHtmlComment(token.raw)) {
 					lines.push(this.applyDefaultStyle(token.raw.trim()));
 				}
 				break;
@@ -567,8 +573,9 @@ export class Markdown implements Component {
 				}
 
 				case "html":
-					// Render inline HTML as plain text
-					if ("raw" in token && typeof token.raw === "string") {
+					// Keep ordinary inline HTML visible, but honor Markdown's invisible
+					// comment semantics (models use comments as paragraph separators).
+					if ("raw" in token && typeof token.raw === "string" && !isHtmlComment(token.raw)) {
 						result += applyTextWithNewlines(token.raw);
 					}
 					break;
