@@ -100,6 +100,7 @@ export {
 	type Component,
 	Container,
 	CURSOR_MARKER,
+	VIEWPORT_FILL_MARKER,
 	type Focusable,
 	isFocusable,
 	type OverlayAnchor,

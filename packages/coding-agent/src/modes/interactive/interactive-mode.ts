@@ -44,6 +44,7 @@ import {
 	Text,
 	TruncatedText,
 	TUI,
+	VIEWPORT_FILL_MARKER,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import chalk from "chalk";
@@ -461,6 +462,16 @@ export class InteractiveMode {
 	// extension UI footprint. Switching foreground never re-binds extensions.
 	private foregroundAgentId = "main";
 	private backgroundAgents = new Map<string, { session: AgentSession; proxy: SessionUiProxy; label?: string }>();
+	/**
+	 * Foreground subagents use a full-screen document: identity/chat remain at
+	 * the top, while spare viewport rows are consumed immediately before the
+	 * editor so input/list/footer stay at the bottom. Main startup remains the
+	 * ordinary terminal-flow document (no global bottom alignment).
+	 */
+	private readonly foregroundViewportFill: Component = {
+		render: () => (this.foregroundAgentId === "main" ? [] : [VIEWPORT_FILL_MARKER]),
+		invalidate() {},
+	};
 	private mainAgentProxy: SessionUiProxy | undefined;
 	private agentsApi: ExtensionAgentsApi | undefined;
 
@@ -751,6 +762,7 @@ export class InteractiveMode {
 		this.ui.addChild(this.statusContainer);
 		this.renderWidgets(); // Initialize with default spacer
 		this.ui.addChild(this.widgetContainerAbove);
+		this.ui.addChild(this.foregroundViewportFill);
 		this.ui.addChild(this.editorContainer);
 		this.ui.addChild(this.widgetContainerBelow);
 		this.ui.addChild(this.footer);
@@ -1827,12 +1839,10 @@ export class InteractiveMode {
 		this.updateTerminalTitle();
 		const label = id === "main" ? "main" : (this.backgroundAgents.get(id)?.label ?? id);
 		this.showStatus(`Foreground agent: ${label}`);
-		// Repaint into the terminal flow (like the very first render at startup):
-		// the old foreground's content scrolls into native scrollback and the new
-		// document — however short — lands with the editor at the terminal bottom.
-		// A clear-based redraw would paint a short conversation from the screen
-		// top, yanking the editor away from where the user is typing.
-		this.ui.requestFlowRender();
+		// Foreground agents are independent full-screen documents. Clear the old
+		// viewport/scrollback and repaint from the top; the viewport-fill marker
+		// above keeps a short child editor/list/footer anchored at the bottom.
+		this.ui.requestRender(true);
 	}
 
 	/**

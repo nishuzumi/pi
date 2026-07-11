@@ -328,7 +328,7 @@ describe("multi-agent foreground switching (virtual terminal e2e)", () => {
 		expect(scrollText(terminal)).not.toContain("reply-from-CHILD");
 	});
 
-	it("foregrounding the child renders ITS conversation into the flow", async () => {
+	it("foregrounding the child repaints a clean child document", async () => {
 		const agents = mainCounters.agents;
 		if (!agents) throw new Error("agents api missing");
 		await agents.setForeground("child");
@@ -337,14 +337,10 @@ describe("multi-agent foreground switching (virtual terminal e2e)", () => {
 			() => viewportText(terminal).includes("reply-from-CHILD to [child-task]"),
 			"child conversation visible",
 		);
-		// Flow render: the child's document is APPENDED below the old foreground's
-		// content (which scrolls into native scrollback) — assert ordering, and
-		// that the live UI footprint now belongs to the child.
-		const scroll = scrollText(terminal);
-		expect(scroll.lastIndexOf("reply-from-CHILD to [child-task]")).toBeGreaterThan(
-			scroll.lastIndexOf("reply-from-MAIN"),
-		);
-		expect(scroll.lastIndexOf("WIDGET-OF-CHILD")).toBeGreaterThan(scroll.lastIndexOf("WIDGET-OF-MAIN"));
+		const viewport = viewportText(terminal);
+		expect(viewport).not.toContain("reply-from-MAIN");
+		expect(viewport).toContain("WIDGET-OF-CHILD");
+		expect(viewport).not.toContain("WIDGET-OF-MAIN");
 	});
 
 	it("routes editor input to the child while it is foreground", async () => {
@@ -382,18 +378,15 @@ describe("multi-agent foreground switching (virtual terminal e2e)", () => {
 		expect(lastAssistantText(childSession)).toContain("reply-from-CHILD to [midstream-task]");
 	});
 
-	it("switches back to main with its conversation and widget intact", async () => {
+	it("switches back to main with its clean conversation and widget intact", async () => {
 		const agents = mainCounters.agents;
 		if (!agents) throw new Error("agents api missing");
 		await agents.setForeground("main");
 		await waitFor(terminal, () => viewportText(terminal).includes("WIDGET-OF-MAIN"), "main widget replayed");
-		// Main's full conversation was re-appended into the flow below the child's,
-		// and the live widget footprint is main's again.
-		const scroll = scrollText(terminal);
-		expect(scroll.lastIndexOf("reply-from-MAIN to [hello-main]")).toBeGreaterThan(
-			scroll.lastIndexOf("reply-from-CHILD"),
-		);
-		expect(scroll.lastIndexOf("WIDGET-OF-MAIN")).toBeGreaterThan(scroll.lastIndexOf("WIDGET-OF-CHILD"));
+		const viewport = viewportText(terminal);
+		expect(viewport).toContain("reply-from-MAIN to [hello-main]");
+		expect(viewport).toContain("WIDGET-OF-MAIN");
+		expect(viewport).not.toContain("WIDGET-OF-CHILD");
 	});
 
 	it("never re-emitted session_start or session_shutdown during switching", () => {

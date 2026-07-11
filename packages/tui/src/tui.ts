@@ -119,6 +119,14 @@ export function isFocusable(component: Component | null): component is Component
  */
 export const CURSOR_MARKER = "\x1b_pi:c\x07";
 
+/**
+ * Zero-width layout marker. A component may render this as its only line to
+ * consume all otherwise-unused viewport rows at that position. This supports
+ * full-screen documents with a top header and bottom editor/footer without
+ * globally bottom-aligning startup content.
+ */
+export const VIEWPORT_FILL_MARKER = "\x1b_pi:f\x07";
+
 export { visibleWidth };
 
 /**
@@ -709,44 +717,6 @@ export class TUI extends Container {
 		this.terminal.stop();
 	}
 
-	/**
-	 * Re-render the document into the terminal flow, like the very first render:
-	 * differ state is reset WITHOUT clearing the screen, the cursor moves to the
-	 * line after the current content, and the next render appends the whole
-	 * document there — previous content scrolls up into native scrollback and
-	 * the editor lands at the terminal bottom.
-	 *
-	 * Hosts use this when swapping the entire document (e.g. multi-agent
-	 * foreground switching): a clear-based full redraw would paint a short
-	 * document from the TOP of the screen, yanking the editor away from the
-	 * bottom where the user is typing.
-	 */
-	requestFlowRender(): void {
-		if (this.stopped) return;
-		// Park the hardware cursor just below the current content (same move as
-		// stop()), so the appended document starts on a fresh line in the flow.
-		if (this.previousLines.length > 0) {
-			const targetRow = this.previousLines.length; // Line after the last content
-			const lineDiff = targetRow - this.hardwareCursorRow;
-			if (lineDiff > 0) {
-				this.terminal.write(`\x1b[${lineDiff}B`);
-			} else if (lineDiff < 0) {
-				this.terminal.write(`\x1b[${-lineDiff}A`);
-			}
-			this.terminal.write("\r\n");
-		}
-		// Reset differ state to "initial": previousWidth/Height 0 (NOT -1) so the
-		// next doRender takes the incremental append path instead of a clear.
-		this.previousLines = [];
-		this.previousWidth = 0;
-		this.previousHeight = 0;
-		this.cursorRow = 0;
-		this.hardwareCursorRow = 0;
-		this.maxLinesRendered = 0;
-		this.previousViewportTop = 0;
-		this.requestRender();
-	}
-
 	requestRender(force = false): void {
 		if (force) {
 			this.previousLines = [];
@@ -1307,6 +1277,22 @@ export class TUI extends Container {
 
 		// Render all components to get new lines
 		let newLines = this.render(width);
+
+		// A viewport-fill marker reserves all spare rows exactly where the marker
+		// component sits (InteractiveMode puts it immediately before the editor).
+		// Unlike global bottom alignment, content before the marker — notably a
+		// subagent identity header and chat — stays pinned to the TOP.
+		const fillRow = newLines.findIndex((line) => line.includes(VIEWPORT_FILL_MARKER));
+		if (fillRow !== -1) {
+			const line = newLines[fillRow]!;
+			const cleaned = line.replace(VIEWPORT_FILL_MARKER, "");
+			const spareRows = Math.max(0, height - (newLines.length - 1));
+			const fill = new Array(spareRows).fill("") as string[];
+			// The normal use is a marker-only line. Preserve any unexpected content
+			// sharing the marker so this remains lossless for custom components.
+			if (cleaned.length > 0) fill.unshift(cleaned);
+			newLines.splice(fillRow, 1, ...fill);
+		}
 
 		// Composite overlays into the rendered lines (before differential compare)
 		if (this.overlayStack.length > 0) {
