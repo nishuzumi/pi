@@ -1827,7 +1827,12 @@ export class InteractiveMode {
 		this.updateTerminalTitle();
 		const label = id === "main" ? "main" : (this.backgroundAgents.get(id)?.label ?? id);
 		this.showStatus(`Foreground agent: ${label}`);
-		this.ui.requestRender();
+		// Repaint into the terminal flow (like the very first render at startup):
+		// the old foreground's content scrolls into native scrollback and the new
+		// document — however short — lands with the editor at the terminal bottom.
+		// A clear-based redraw would paint a short conversation from the screen
+		// top, yanking the editor away from where the user is typing.
+		this.ui.requestFlowRender();
 	}
 
 	/**

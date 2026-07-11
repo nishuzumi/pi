@@ -709,6 +709,44 @@ export class TUI extends Container {
 		this.terminal.stop();
 	}
 
+	/**
+	 * Re-render the document into the terminal flow, like the very first render:
+	 * differ state is reset WITHOUT clearing the screen, the cursor moves to the
+	 * line after the current content, and the next render appends the whole
+	 * document there — previous content scrolls up into native scrollback and
+	 * the editor lands at the terminal bottom.
+	 *
+	 * Hosts use this when swapping the entire document (e.g. multi-agent
+	 * foreground switching): a clear-based full redraw would paint a short
+	 * document from the TOP of the screen, yanking the editor away from the
+	 * bottom where the user is typing.
+	 */
+	requestFlowRender(): void {
+		if (this.stopped) return;
+		// Park the hardware cursor just below the current content (same move as
+		// stop()), so the appended document starts on a fresh line in the flow.
+		if (this.previousLines.length > 0) {
+			const targetRow = this.previousLines.length; // Line after the last content
+			const lineDiff = targetRow - this.hardwareCursorRow;
+			if (lineDiff > 0) {
+				this.terminal.write(`\x1b[${lineDiff}B`);
+			} else if (lineDiff < 0) {
+				this.terminal.write(`\x1b[${-lineDiff}A`);
+			}
+			this.terminal.write("\r\n");
+		}
+		// Reset differ state to "initial": previousWidth/Height 0 (NOT -1) so the
+		// next doRender takes the incremental append path instead of a clear.
+		this.previousLines = [];
+		this.previousWidth = 0;
+		this.previousHeight = 0;
+		this.cursorRow = 0;
+		this.hardwareCursorRow = 0;
+		this.maxLinesRendered = 0;
+		this.previousViewportTop = 0;
+		this.requestRender();
+	}
+
 	requestRender(force = false): void {
 		if (force) {
 			this.previousLines = [];
