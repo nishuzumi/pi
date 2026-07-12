@@ -8,7 +8,7 @@
 
 ### Fixed
 
-- Fixed Markdown rendering to keep HTML comments invisible while preserving other HTML-like text.
+- Fixed Markdown rendering to keep HTML comments invisible without retaining adjacent duplicate or trailing blank rows, while preserving other HTML-like text.
 
 ## [0.80.6] - 2026-07-09
 

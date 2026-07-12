@@ -1377,6 +1377,25 @@ bar`,
 			assert.ok(!output.includes("separator"), "HTML comment body should be invisible");
 		});
 
+		it("should render comment-only Markdown as no rows", () => {
+			const markdown = new Markdown("<!-- invisible metadata -->", 0, 0, defaultMarkdownTheme);
+
+			assert.deepEqual(markdown.render(80), []);
+		});
+
+		it("should not leave trailing rows for a block HTML comment", () => {
+			const markdown = new Markdown(
+				"**Thinking summary**\n\n<!-- invisible metadata -->",
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
+
+			assert.deepEqual(lines, ["Thinking summary"]);
+		});
+
 		it("should not render inline HTML comments", () => {
 			const markdown = new Markdown("before <!-- hidden separator --> after", 0, 0, defaultMarkdownTheme);
 

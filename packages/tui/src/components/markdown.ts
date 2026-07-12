@@ -10,6 +10,26 @@ function isHtmlComment(raw: string): boolean {
 	return HTML_COMMENT_REGEX.test(raw.trim());
 }
 
+function normalizeInvisibleCommentSpacing(tokens: Token[]): Token[] {
+	const visibleTokens = tokens.filter(
+		(token) =>
+			!(token.type === "html" && "raw" in token && typeof token.raw === "string" && isHtmlComment(token.raw)),
+	);
+	const normalized: Token[] = [];
+
+	for (const token of visibleTokens) {
+		if (token.type === "space" && (normalized.length === 0 || normalized[normalized.length - 1]?.type === "space")) {
+			continue;
+		}
+		normalized.push(token);
+	}
+
+	if (normalized[normalized.length - 1]?.type === "space") {
+		normalized.pop();
+	}
+	return normalized;
+}
+
 class StrictStrikethroughTokenizer extends Tokenizer {
 	override del(src: string): Tokens.Del | undefined {
 		const match = STRICT_STRIKETHROUGH_REGEX.exec(src);
@@ -178,13 +198,20 @@ export class Markdown implements Component {
 		// Parse markdown to HTML-like tokens
 		const tokens = markdownParser.lexer(normalizedText);
 		trimPartialClosingFences(tokens);
+		const visibleTokens = normalizeInvisibleCommentSpacing(tokens);
+		if (visibleTokens.length === 0) {
+			this.cachedText = this.text;
+			this.cachedWidth = width;
+			this.cachedLines = [];
+			return [];
+		}
 
 		// Convert tokens to styled terminal output
 		const renderedLines: string[] = [];
 
-		for (let i = 0; i < tokens.length; i++) {
-			const token = tokens[i];
-			const nextToken = tokens[i + 1];
+		for (let i = 0; i < visibleTokens.length; i++) {
+			const token = visibleTokens[i];
+			const nextToken = visibleTokens[i + 1];
 			const tokenLines = this.renderToken(token, contentWidth, nextToken?.type);
 			for (const tokenLine of tokenLines) {
 				renderedLines.push(tokenLine);
