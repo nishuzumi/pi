@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import * as path from "node:path";
-import { type AutocompleteProvider, CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
+import { type AutocompleteProvider, CombinedAutocompleteProvider, Text } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { type Component, Container, type Focusable, TUI } from "../../tui/src/tui.ts";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
@@ -114,6 +114,45 @@ describe("InteractiveMode.showStatus", () => {
 		// adds spacer + text
 		expect(fakeThis.chatContainer.children).toHaveLength(5);
 		expect(renderLastLine(fakeThis.chatContainer)).toContain("STATUS_TWO");
+	});
+});
+
+describe("InteractiveMode completion layout", () => {
+	test("does not add blank rows when the working indicator disappears", async () => {
+		initTheme("dark");
+		const terminal = new VirtualTerminal(40, 8);
+		const ui = new TUI(terminal);
+		const statusContainer = new Container();
+		statusContainer.addChild(new Text("Working...", 0, 0));
+		ui.addChild(new Text("FINAL OUTPUT", 0, 0));
+		ui.addChild(statusContainer);
+		ui.addChild(new Text("EDITOR", 0, 0));
+		ui.setClearOnShrink(true);
+
+		const fakeThis: any = Object.assign(Object.create(InteractiveMode.prototype), {
+			activeStatusIndicator: { kind: "working", dispose: vi.fn() },
+			defaultWorkingMessage: "Working...",
+			getAgentsApi: () => undefined,
+			statusContainer,
+			ui,
+			workingVisible: true,
+		});
+		const extensionUi = fakeThis.createExtensionUIContext();
+
+		ui.start();
+		try {
+			await flushTui(ui, terminal);
+			extensionUi.setWorkingVisible(false);
+			await flushTui(ui, terminal);
+
+			const viewport = terminal.getViewport().map((line) => line.trimEnd());
+			const outputRow = viewport.indexOf("FINAL OUTPUT");
+			const editorRow = viewport.indexOf("EDITOR");
+			expect(outputRow).toBeGreaterThanOrEqual(0);
+			expect(editorRow).toBe(outputRow + 1);
+		} finally {
+			ui.stop();
+		}
 	});
 });
 

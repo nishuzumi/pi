@@ -9,6 +9,7 @@
 ### Fixed
 
 - Fixed foreground agent switches to reconcile the incoming session's working indicator and avoid redundant foreground status lines.
+- Clearing a working status indicator no longer leaves two blank terminal rows behind.
 
 ## [0.80.6] - 2026-07-09
 
